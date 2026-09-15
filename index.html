@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Solana MC Watcher — Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0f14;
+    --panel: #111722;
+    --border: #1f2937;
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --green: #16a34a;
+    --green-bg: #052e1a;
+    --red-bg: #3b0d0d;
+    --red: #f87171;
+    --amber: #f59e0b;
+    --amber-bg: #3a2a05;
+    --accent: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .panel h2 { font-size: 15px; margin: 0 0 12px; color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+  tr:hover td { background: rgba(255,255,255,0.02); }
+  tr.is-active td { background: rgba(245, 158, 11, 0.05); }
+  .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 12px; }
+  .badge.in { background: var(--green-bg); color: #4ade80; }
+  .badge.out { background: var(--red-bg); color: var(--red); }
+  .badge.active { background: var(--green-bg); color: #4ade80; }
+  .badge.inactive { background: var(--border); color: var(--muted); }
+  .badge.gate { background: var(--amber-bg); color: var(--amber); }
+  .addr { font-family: monospace; color: var(--muted); font-size: 11px; cursor: pointer; }
+  .token-name { cursor: default; }
+  .token-name:hover { color: var(--accent); text-decoration: underline dotted; }
+  .rownum { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .change-up { color: #4ade80; font-weight: 600; }
+  .change-down { color: var(--red); font-weight: 600; }
+  .change-flat { color: var(--muted); }
+  .table-wrap { overflow-x: auto; max-width: 100%; }
+  .top-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .count-pill {
+    background: var(--border);
+    color: var(--text);
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    margin-left: 8px;
+  }
+  button, input {
+    font-family: inherit;
+    font-size: 13px;
+  }
+  input[type=text] {
+    background: #0b0f14;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 9px 12px;
+    border-radius: 8px;
+    width: 100%;
+  }
+  button {
+    background: var(--accent);
+    color: #0b0f14;
+    border: none;
+    padding: 9px 16px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  button.danger {
+    background: var(--red-bg);
+    color: var(--red);
+    padding: 4px 9px;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .form-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .form-row > div { flex: 1; min-width: 200px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 8px; line-height: 1.7; }
+  .empty { text-align: center; color: var(--muted); padding: 30px 0; }
+  .updated { color: var(--muted); font-size: 12px; }
+
+  /* Hover chart preview panel — covers the right half of the screen */
+  #chartPreview {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 50vw;
+    height: 100vh;
+    background: #0b0f14;
+    border-left: 2px solid var(--accent);
+    box-shadow: -10px 0 30px rgba(0,0,0,0.5);
+    z-index: 1000;
+    display: none;
+    /* Interactive on purpose now — so the user can click the chart's own
+       Auto/Log scale toggle inside it (see hover logic below for how we
+       keep it open while the mouse is over the panel itself). */
+  }
+  #chartPreview iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+  }
+  #chartPreview .chart-label {
+    position: absolute;
+    top: 8px;
+    left: 12px;
+    background: rgba(0,0,0,0.6);
+    color: var(--text);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    z-index: 1001;
+  }
+</style>
+</head>
+<body>
+
+  <h1>📡 Solana MC Watcher</h1>
+  <div class="sub">Live dashboard for watched tokens — <span id="updated" class="updated"></span></div>
+
+  <div class="panel">
+    <h2>➕ Add New Token to Watchlist</h2>
+    <div class="form-row">
+      <div>
+        <input type="text" id="addr" placeholder="Solana contract address" />
+      </div>
+      <div>
+        <input type="text" id="name" placeholder="Optional label" />
+      </div>
+      <button id="addBtn" onclick="submitToken()">Add Token</button>
+    </div>
+    <div class="hint" id="addHint">
+      Enter a Solana contract address and click the button — it's added straight to
+      <code>tokens.json</code> in the background. No GitHub tab, no confirmation click.
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="top-row">
+      <h2 style="margin:0">Watchlist <span class="count-pill" id="count">0 tokens</span></h2>
+      <button class="secondary" onclick="loadData()">🔄 Refresh</button>
+    </div>
+    <div class="hint" style="margin-top:0; margin-bottom:10px;">
+      Hover a token's <b>name</b> to preview its live daily chart on the right half of the screen.
+      Move off the name (e.g. onto the address to copy it) and the chart disappears — it never blocks copying the contract address.
+    </div>
+    <div class="table-wrap">
+      <table id="table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Token</th>
+            <th>Age</th>
+            <th>Market Cap</th>
+            <th>Daily Watch</th>
+            <th>MC Gate</th>
+            <th>Final Alert</th>
+            <th title="Volume 24h">Vol 24h</th>
+            <th title="Volume 4h">Vol 4h</th>
+            <th title="Liquidity">Liq</th>
+            <th>Daily Status</th>
+            <th title="Daily Change %">Chg 24h</th>
+            <th>4h Status</th>
+            <th title="4h Change %">Chg 4h</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div id="empty" class="empty" style="display:none">No data yet — run the workflow manually once or wait for the next scheduled run.</div>
+    </div>
+  </div>
+
+  <div id="chartPreview" onmouseenter="cancelHideChart()" onmouseleave="hideChart()">
+    <div class="chart-label" id="chartLabel"></div>
+    <iframe id="chartFrame" src="" loading="lazy"></iframe>
+  </div>
+
+<script>
+  const OWNER = "meisamnewwork";
+  const REPO = "solana-mc-watcher";
+  const WORKER_URL = "https://solana-token-adder.may88irs.workers.dev";
+  // Must match the APP_SECRET set on the Cloudflare Worker. This value is
+  // visible to anyone who views this page's source — it only filters out
+  // automated bots hitting the Worker URL blindly, not a targeted attacker.
+  const APP_SECRET = "xMCP3QbPp6GnxadvWq8A4E4VqtuRnrmY";
+
+  // Escapes text before it's placed inside innerHTML, so a malicious token
+  // name/symbol (which anyone launching a token on Solana can set to
+  // anything, including HTML/script) can never execute in the browser.
+  function esc(str) {
+    return String(str ?? "").replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+    }[c]));
+  }
+
+  // Compact currency formatting: $1.52M, $45.3K, $980
+  function fmtNum(n) {
+    if (n === null || n === undefined) return "—";
+    const num = Number(n);
+    const abs = Math.abs(num);
+    if (abs >= 1e9) return "$" + (num / 1e9).toFixed(2) + "B";
+    if (abs >= 1e6) return "$" + (num / 1e6).toFixed(2) + "M";
+    if (abs >= 1e3) return "$" + (num / 1e3).toFixed(1) + "K";
+    return "$" + num.toFixed(0);
+  }
+
+  // Signed % change with color + arrow: +12.4% (green) / -8.1% (red)
+  function fmtChange(n) {
+    if (n === null || n === undefined) return '<span class="change-flat">—</span>';
+    const num = Number(n);
+    if (num > 0) return `<span class="change-up">▲ +${num.toFixed(2)}%</span>`;
+    if (num < 0) return `<span class="change-down">▼ ${num.toFixed(2)}%</span>`;
+    return `<span class="change-flat">0.00%</span>`;
+  }
+
+  function isActiveStr(v) {
+    return v === "فعال" || v === "Active" || v === true;
+  }
+
+  function statusLabel(status) {
+    if (!status || status === "—") return { text: "—", isIn: null };
+    const isIn = status.includes("رنج") && !status.includes("خارج");
+    let text = status;
+    if (status.includes("خارج")) text = "Out of range";
+    else if (status.includes("چهارساعته")) text = "In range (4h)";
+    else if (status.includes("روزانه")) text = "In range (daily)";
+    else if (status.includes("رنج")) text = "In range";
+    return { text, isIn };
+  }
+
+  function statusBadge(status) {
+    const { text, isIn } = statusLabel(status);
+    if (isIn === null) return `<span class="badge inactive">—</span>`;
+    return `<span class="badge ${isIn ? "in" : "out"}">${text}</span>`;
+  }
+
+  // --- Locally-hidden (removed) tokens ---------------------------------
+  // Removing a token only edits tokens.json (via the Worker); results.json
+  // itself isn't regenerated until the next hourly monitor run, so without
+  // this the auto-refresh (every 60s) would re-fetch the stale results.json
+  // and bring the "removed" row right back for up to an hour. Instead we
+  // remember removed addresses in this browser and filter them out of every
+  // render, then automatically forget an address once it's genuinely gone
+  // from results.json (i.e. the monitor run has caught up) or after 24h.
+  const REMOVED_KEY = "scw_hidden_removed_v1";
+
+  function loadRemovedMap() {
+    try { return JSON.parse(localStorage.getItem(REMOVED_KEY) || "{}"); }
+    catch (e) { return {}; }
+  }
+
+  function saveRemovedMap(map) {
+    try { localStorage.setItem(REMOVED_KEY, JSON.stringify(map)); }
+    catch (e) { /* ignore quota/private-mode errors */ }
+  }
+
+  function markLocallyRemoved(address) {
+    const map = loadRemovedMap();
+    map[address] = Date.now();
+    saveRemovedMap(map);
+  }
+
+  // Drops entries once results.json no longer contains them, or after 24h
+  // as a safety net; returns the pruned map.
+  function pruneRemovedMap(removedMap, presentAddresses) {
+    const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+    let changed = false;
+    for (const addr of Object.keys(removedMap)) {
+      if (!presentAddresses.has(addr) || Date.now() - removedMap[addr] > ONE_DAY_MS) {
+        delete removedMap[addr];
+        changed = true;
+      }
+    }
+    if (changed) saveRemovedMap(removedMap);
+    return removedMap;
+  }
+
+  function watchBadge(v) {
+    const active = isActiveStr(v);
+    return `<span class="badge ${active ? "active" : "inactive"}">${active ? "Active" : "Inactive"}</span>`;
+  }
+
+  function gateBadge(v) {
+    const active = isActiveStr(v);
+    if (active) return `<span class="badge gate">Active 🚨</span>`;
+    return `<span class="badge inactive">—</span>`;
+  }
+
+  // Final alert = market cap in the $5K-$10K band AND the last fully-closed
+  // daily candle closed green. Turns off again once the token leaves the band.
+  function finalAlertBadge(r) {
+    if (r.final_alert_active) return `<span class="badge active">🟢 Final</span>`;
+    return `<span class="badge inactive">—</span>`;
+  }
+
+  function priority(r) {
+    if (r.final_alert_active) return 3;
+    if (isActiveStr(r.mc_gate)) return 2;
+    if (isActiveStr(r.daily_watch)) return 1;
+    return 0;
+  }
+
+  // 🔥 shows only after a token has recovered back ABOVE $25K following a dip below it.
+  // Turns off again the moment it drops below $25K, until it recovers again.
+  function isRecovering(r) {
+    return r.recovered_from_dip === true;
+  }
+
+  let hideTimer = null;
+
+  function cancelHideChart() {
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+  }
+
+  function showChart(pairAddress, tokenLabel) {
+    if (!pairAddress) return;
+    cancelHideChart();
+    const frame = document.getElementById("chartFrame");
+    const panel = document.getElementById("chartPreview");
+    const label = document.getElementById("chartLabel");
+    // Back on GeckoTerminal (DexScreener doesn't save/remember chart display
+    // settings across visits, so its Auto/Log toggle had to be re-clicked
+    // every time). GeckoTerminal's embed also officially supports forcing
+    // the daily timeframe + market-cap view via URL params — see below.
+    frame.src = `https://www.geckoterminal.com/solana/pools/${pairAddress}?embed=1&info=0&swaps=0&light_chart=0&chart_type=market_cap&resolution=1d&bg_color=0b0f14`;
+    label.textContent = tokenLabel;
+    panel.style.display = "block";
+  }
+
+  function hideChart() {
+    cancelHideChart();
+    hideTimer = setTimeout(() => {
+      document.getElementById("chartPreview").style.display = "none";
+      document.getElementById("chartFrame").src = ""; // stop loading/playing the chart while hidden
+    }, 200);
+  }
+
+  async function loadData() {
+    try {
+      const res = await fetch("results.json?t=" + Date.now());
+      const data = await res.json();
+      let rows = data.rows || [];
+
+      const presentAddresses = new Set(rows.map(r => r.address));
+      const removedMap = pruneRemovedMap(loadRemovedMap(), presentAddresses);
+      rows = rows.filter(r => !(r.address in removedMap));
+
+      rows = [...rows].sort((a, b) => {
+        const pa = priority(a), pb = priority(b);
+        if (pa !== pb) return pb - pa;
+        const ma = a.market_cap ?? Infinity, mb = b.market_cap ?? Infinity;
+        return ma - mb;
+      });
+
+      document.getElementById("updated").textContent = "Last updated: " + new Date(data.updated_at).toLocaleString("en-US");
+      document.getElementById("count").textContent = rows.length + (rows.length === 1 ? " token" : " tokens");
+
+      const tbody = document.getElementById("tbody");
+      tbody.innerHTML = "";
+      document.getElementById("empty").style.display = rows.length ? "none" : "block";
+
+      rows.forEach((r, i) => {
+        const tr = document.createElement("tr");
+        if (priority(r) > 0) tr.classList.add("is-active");
+        const fireEmoji = isRecovering(r) ? " 🔥" : "";
+        // safeToken is used inside an onmouseenter='...' HTML attribute, so it
+        // needs both quote-escaping (for the attribute) AND HTML-escaping
+        // (for angle brackets etc). safeAddress/tokenHtml are used as element
+        // *content*, so plain esc() is enough there.
+        const safeToken = esc(r.token).replace(/'/g, "\\'");
+        const tokenHtml = esc(r.token);
+        const safeAddress = esc(r.address);
+        tr.innerHTML = `
+          <td class="rownum">${i + 1}</td>
+          <td>
+            <div class="token-name" onmouseenter="showChart('${r.pair_address || ''}', '${safeToken}')" onmouseleave="hideChart()">${tokenHtml}</div>
+            <div class="addr" title="Click to copy" onclick="navigator.clipboard.writeText('${safeAddress}')">${safeAddress.slice(0,4)}...${safeAddress.slice(-4)} 📋</div>
+          </td>
+          <td>${r.age_days !== null ? r.age_days + "d" : "—"}</td>
+          <td><b>${fmtNum(r.market_cap)}</b>${fireEmoji}</td>
+          <td>${watchBadge(r.daily_watch)}</td>
+          <td>${gateBadge(r.mc_gate)}</td>
+          <td>${finalAlertBadge(r)}</td>
+          <td>${fmtNum(r.volume_24h)}</td>
+          <td>${fmtNum(r.volume_4h)}</td>
+          <td>${fmtNum(r.liquidity)}</td>
+          <td>${statusBadge(r.daily_status)}</td>
+          <td>${fmtChange(r.daily_range_pct)}</td>
+          <td>${statusBadge(r["4h_status"])}</td>
+          <td>${fmtChange(r.change_4h_pct)}</td>
+          <td><button class="danger" title="Remove" onclick="removeToken('${safeAddress}', this)">✕</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      console.error(e);
+      document.getElementById("empty").style.display = "block";
+      document.getElementById("empty").textContent = "Error loading data — results.json may not exist yet.";
+    }
+  }
+
+  async function submitToken() {
+    const addr = document.getElementById("addr").value.trim();
+    const name = document.getElementById("name").value.trim();
+    if (!addr) { alert("Please enter a contract address."); return; }
+
+    const btn = document.getElementById("addBtn");
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Adding...";
+
+    try {
+      const res = await fetch(WORKER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-App-Secret": APP_SECRET },
+        body: JSON.stringify({ action: "add", address: addr, name }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert("❌ Error: " + (data.error || "Something went wrong."));
+      } else if (data.status === "duplicate") {
+        alert("⚠️ This token is already in the watchlist.");
+      } else {
+        alert("✅ Token added! It will be checked within the hour (or run the workflow manually now).");
+        document.getElementById("addr").value = "";
+        document.getElementById("name").value = "";
+        loadData();
+      }
+    } catch (e) {
+      alert("❌ Network error: " + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  }
+
+  async function removeToken(address, btnEl) {
+    if (!confirm("Remove this token from the watchlist?")) return;
+
+    btnEl.disabled = true;
+    const originalText = btnEl.textContent;
+    btnEl.textContent = "Removing...";
+
+    try {
+      const res = await fetch(WORKER_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-App-Secret": APP_SECRET },
+        body: JSON.stringify({ action: "remove", address }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert("❌ Error: " + (data.error || "Something went wrong."));
+        btnEl.disabled = false;
+        btnEl.textContent = originalText;
+        return;
+      }
+
+      if (data.status === "not_found") {
+        alert("⚠️ This token wasn't found in the watchlist (maybe already removed).");
+      }
+
+      markLocallyRemoved(address);
+      btnEl.closest("tr").remove();
+      const count = document.getElementById("tbody").children.length;
+      document.getElementById("count").textContent = count + (count === 1 ? " token" : " tokens");
+    } catch (e) {
+      alert("❌ Network error: " + e.message);
+      btnEl.disabled = false;
+      btnEl.textContent = originalText;
+    }
+  }
+
+  loadData();
+  setInterval(loadData, 60000); // auto-refresh every minute
+</script>
+
+</body>
+</html>
